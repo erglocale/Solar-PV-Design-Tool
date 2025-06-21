@@ -1,0 +1,3 @@
+venv/
+.streamlit/ # (Optional: If Streamlit creates a local cache folder)
+__pycache__/
