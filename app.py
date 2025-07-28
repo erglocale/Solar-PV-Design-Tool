@@ -345,7 +345,7 @@ def display_design_summary(params, results_calc):
     """, unsafe_allow_html=True)
 
 def display_inverter_features(params, results_calc):
-    st.subheader("Inverter Features")
+    st.subheader("Inverter ")
     st.markdown(f"""
     <div style="background-color: #e6f2ff; padding: 10px; border-radius: 5px;">
     <h5 style="margin-top: 0; color: #004d99;">Voltage Features & Current Features</h5>
@@ -1085,8 +1085,7 @@ elif st.session_state.current_step == 5: # Results step
                 continue
 
             # Calls the various display functions to present the calculated results in a structured and readable format.
-            display_design_summary(current_params, results_calc_scenario)
-            st.markdown("---") # Separator
+            
 
             display_inverter_features(current_params, results_calc_scenario)
             st.markdown("---") # Separator
