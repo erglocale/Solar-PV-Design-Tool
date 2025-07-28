@@ -27,6 +27,21 @@ def format_value(value, decimal_places=0):
         return "N/A"
     return f"{value:.{decimal_places}f}"
 
+# --- Helper function to parse comma-separated numbers ---
+def parse_numbers_from_string(input_string, default_value):
+    if not input_string:
+        return [default_value]
+    numbers = []
+    parts = input_string.split(',')
+    for part in parts:
+        try:
+            num = int(part.strip())
+            numbers.append(num)
+        except ValueError:
+            st.warning(f"Skipping invalid input: '{part.strip()}' is not a valid number. Using default {default_value}.")
+    return numbers if numbers else [default_value]
+
+
 # --- Helper function to calculate Tm and Tcell for a single row based on a given gain ---
 # Implements a variation of the NOCT model to predict module (Tm) and cell (Tcell) temperatures
 # from environmental data. Used during the temperature range determination (Step 4).
@@ -80,6 +95,10 @@ def calculate_solar_pv_design(
     """
     results = {}
     STC_temp = 25  # Standard Test Condition temperature for modules
+
+    # Store the specific design configuration for this run
+    results['Design Modules per String'] = design_modules_per_string
+    results['Design Strings per Inverter'] = design_strings_per_inverter
 
     # Initialize temperature limit keys (will be populated with calculated values later)
     results['Min temp for Voc to reach max inverter voltage (°C)'] = float('nan')
@@ -316,8 +335,8 @@ def display_design_summary(params, results_calc):
     | Tilt angle | {params['design_tilt_angle']} | degrees |
     | Row spacing | {params['design_row_spacing_m']:.2f} | m |
     | PV module rated power | {params['design_pv_module_rated_power_wp']} | Wp |
-    | Ratio modules/string | {params['design_modules_per_string']} | |
-    | Ratio strings/inverter | {params['design_strings_per_inverter']} | |
+    | Ratio modules/string | {results_calc['Design Modules per String']} | |
+    | Ratio strings/inverter | {results_calc['Design Strings per Inverter']} | |
     | Number of inverter | {params['design_num_inverters']} | |
     | Inverter rated AC power | {params['design_inverter_rated_ac_power_kVA']} | kVA |
     | Total rated power P$_{{DC}}$ | {results_calc['Total rated power PDC (MWp)']:.3f} | MWp |
@@ -408,7 +427,7 @@ def display_configuration_maximum(params, results_calc):
                 <td style="border: 1px solid #ddd; padding: 8px;">{results_calc['Configured_num_strings_per_inverter']}</td>
                 <td style="border: 1px solid #ddd; padding: 8px;">{results_calc['Configured_DC_Power_per_inverter_kWp']:.2f}</td>
                 <td style="border: 1px solid #ddd; padding: 8px;">{params['inverter_max_recommended_pv_power_kw']}</td>
-                <td style="border: 1px solid #ddd; padding: 8px; color: {color};">{symbol}</td> 
+                <td style="border: 1px solid #ddd; padding: 8px; color: {color};">{symbol}</td>
             </tr>
         </tbody>
     </table>
@@ -576,9 +595,12 @@ if 'input_params' not in st.session_state:
         'inverter_nb_inputs_cc': 32, 'inverter_isc_max_per_inputs': 0.0,
 
         # Design Configuration Proposed Inputs initial values
+        # These will now be strings for comma-separated inputs
         'design_azimuth': 0, 'design_tilt_angle': 60, 'design_row_spacing_m': 6.35,
-        'design_pv_module_rated_power_wp': 530, 'design_modules_per_string': 28,
-        'design_strings_per_inverter': 322, 'design_num_inverters': 1,
+        'design_pv_module_rated_power_wp': 530,
+        'design_modules_per_string_input': "28,30", # Default for multiple modules per string
+        'design_strings_per_inverter_input': "322,300", # Default for multiple strings per inverter
+        'design_num_inverters': 1,
         'design_inverter_rated_ac_power_kVA': 3960,
 
         # Operating Temperatures - These will be calculated in Step 4. Initialized to NaN.
@@ -688,9 +710,16 @@ elif st.session_state.current_step == 3:
 
     with main_col_right:
         st.subheader("Stringing Configuration")
+        st.write("Enter comma-separated values for multiple scenarios.")
         # Input fields for module stringing and inverter connection configuration.
-        st.session_state.input_params['design_modules_per_string'] = st.number_input("Ratio modules/string", value=params['design_modules_per_string'], min_value=1)
-        st.session_state.input_params['design_strings_per_inverter'] = st.number_input("Ratio strings/inverter", value=params['design_strings_per_inverter'], min_value=1)
+        st.session_state.input_params['design_modules_per_string_input'] = st.text_input(
+            "Ratio modules/string (e.g., 28,30)",
+            value=params['design_modules_per_string_input']
+        )
+        st.session_state.input_params['design_strings_per_inverter_input'] = st.text_input(
+            "Ratio strings/inverter (e.g., 322,300)",
+            value=params['design_strings_per_inverter_input']
+        )
         st.session_state.input_params['design_num_inverters'] = st.number_input("Number of inverter", value=params['design_num_inverters'], min_value=1)
         st.session_state.input_params['design_inverter_rated_ac_power_kVA'] = st.number_input("Inverter rated AC power (kVA)", value=params['design_inverter_rated_ac_power_kVA'])
 
@@ -752,10 +781,10 @@ elif st.session_state.current_step == 4: # Dedicated step for Operating Temperat
     # User inputs for inclination gain factors.
     col_gain1, col_gain2 = st.columns(2)
     with col_gain1:
-        # FIX APPLIED HERE: Added format="%.2f" to allow two decimal places for Max Temp Inclination Gain.
+        # Added format="%.2f" to allow two decimal places for Max Temp Inclination Gain.
         st.session_state.input_params['max_temp_inclination_gain'] = st.number_input("Max Temp Inclination Gain", value=params['max_temp_inclination_gain'], format="%.2f", key="max_temp_gain")
     with col_gain2:
-        # FIX APPLIED HERE: Added format="%.2f" to allow two decimal places for Min Temp Inclination Gain.
+        # Added format="%.2f" to allow two decimal places for Min Temp Inclination Gain.
         st.session_state.input_params['min_temp_inclination_gain'] = st.number_input("Min Temp Inclination Gain", value=params['min_temp_inclination_gain'], format="%.2f", key="min_temp_gain")
 
     st.markdown("---")
@@ -845,8 +874,8 @@ elif st.session_state.current_step == 4: # Dedicated step for Operating Temperat
         # 3. Identify max_op_temp_c: The absolute maximum Tcell from these 20 calculated values.
         if not tcell_values_for_max_selection.empty:
             max_op_temp_c_calculated = tcell_values_for_max_selection.max()
-            st.session_state.input_params['max_op_temp_c'] = max_op_temp_c_calculated 
-            # st.session_state.input_params['max_op_temp_c'] = 72.131748
+            st.session_state.input_params['max_op_temp_c'] = max_op_temp_c_calculated
+            # st.session_state.input_params['max_op_temp_c'] = 72.131748 # Uncomment for fixed test value
         else:
             st.session_state.input_params['max_op_temp_c'] = float('nan')
 
@@ -877,7 +906,7 @@ elif st.session_state.current_step == 4: # Dedicated step for Operating Temperat
         # Select the absolute minimum among all candidates to determine min_op_temp_c.
         if overall_min_tcell_candidates:
             st.session_state.input_params['min_op_temp_c'] = min(overall_min_tcell_candidates)
-            #  st.session_state.input_params['min_op_temp_c'] = 8.74062
+            # st.session_state.input_params['min_op_temp_c'] = 8.74062 # Uncomment for fixed test value
         else:
             st.session_state.input_params['min_op_temp_c'] = float('nan')
 
@@ -943,88 +972,130 @@ elif st.session_state.current_step == 4: # Dedicated step for Operating Temperat
 
 
 elif st.session_state.current_step == 5: # Results step
-    st.header("Step 5: Design Validation Results")
+    st.header("Step 5: Design Validation Results for Multiple Scenarios")
 
     # Critical check: Ensure operating temperatures have been derived successfully from Step 4.
     if math.isnan(params['max_op_temp_c']) or math.isnan(params['min_op_temp_c']):
         st.error("Operating temperatures are not yet defined. Please go back to 'Step 4: Operating Temperature Range' and upload a valid Excel file.")
         st.stop() # Stop execution here if critical inputs are missing.
 
-    # --- Perform Calculations ---
-    # Call the main calculation function, passing all parameters gathered from session_state.
-    params_for_calc = st.session_state.input_params
-    results_calc = calculate_solar_pv_design( # This is the main call to the logic function.
-        # Module parameters passed from session state
-        params_for_calc['module_supplier'], params_for_calc['module_type'], params_for_calc['module_vmpp'], params_for_calc['module_voc'], params_for_calc['module_impp'], params_for_calc['module_isc'],
-        params_for_calc['module_power_stc'], params_for_calc['module_v_max_system'], params_for_calc['module_temp_coeff_pmax'], params_for_calc['module_temp_coeff_voc'],
-        params_for_calc['module_temp_coeff_isc'], params_for_calc['module_noct'], params_for_calc['module_dim_width'], params_for_calc['module_dim_length'],
-
-        # Module temperature model coeffs (selected in Step 4)
-        params_for_calc['selected_coeff_a'], params_for_calc['selected_coeff_b'], params_for_calc['selected_coeff_delta_tcnd'],
-
-        # Inverter General Info
-        params_for_calc['inverter_supplier'], params_for_calc['inverter_type'], params_for_calc['inverter_transformer_integrated'],
-
-        # Inverter DC Input limits
-        params_for_calc['inverter_vmpp_min'], params_for_calc['inverter_vmpp_max'], params_for_calc['inverter_v_system_max'],
-        params_for_calc['inverter_max_recommended_pv_power_kw'], params_for_calc['inverter_nominal_pv_power_kw'],
-        params_for_calc['inverter_max_pv_current_a'], params_for_calc['inverter_nominal_pv_current_a'],
-        params_for_calc['inverter_nb_inputs_cc'], params_for_calc['inverter_isc_max_per_inputs'],
-
-        # Design Configuration parameters
-        params_for_calc['design_azimuth'], params_for_calc['design_tilt_angle'], params_for_calc['design_row_spacing_m'],
-        params_for_calc['design_pv_module_rated_power_wp'],
-        params_for_calc['design_modules_per_string'], params_for_calc['design_strings_per_inverter'], params_for_calc['design_num_inverters'],
-        params_for_calc['design_inverter_rated_ac_power_kVA'],
-
-        # Operating Temperatures (derived in Step 4) and Inclination Gains
-        params_for_calc['max_op_temp_c'], params_for_calc['min_op_temp_c'],
-        params_for_calc['max_temp_inclination_gain'], params_for_calc['min_temp_inclination_gain']
+    # Parse multiple inputs for modules per string and strings per inverter
+    modules_per_string_scenarios = parse_numbers_from_string(
+        params['design_modules_per_string_input'],
+        default_value=28 # Use a sensible default if parsing fails or input is empty
     )
+    strings_per_inverter_scenarios = parse_numbers_from_string(
+        params['design_strings_per_inverter_input'],
+        default_value=322 # Use a sensible default if parsing fails or input is empty
+    )
+
+    if len(modules_per_string_scenarios) != len(strings_per_inverter_scenarios):
+        st.error("Error: The number of values for 'Ratio modules/string' and 'Ratio strings/inverter' must be equal for one-to-one scenario testing.")
+        # Fallback to the first values if lengths don't match to avoid errors, or stop.
+        # For simplicity, let's stop and force user to correct.
+        st.stop()
+
+    all_calculated_results = []
+
+    # Loop through each scenario using zip for one-to-one correspondence
+    for i, (modules_per_string, strings_per_inverter) in enumerate(zip(modules_per_string_scenarios, strings_per_inverter_scenarios)):
+        # Create a copy of params to modify for this specific scenario
+        current_params = params.copy()
+        current_params['design_modules_per_string'] = modules_per_string
+        current_params['design_strings_per_inverter'] = strings_per_inverter
+
+        # Perform Calculations for the current scenario
+        try:
+            results_calc = calculate_solar_pv_design(
+                # Module parameters passed from session state
+                current_params['module_supplier'], current_params['module_type'], current_params['module_vmpp'], current_params['module_voc'], current_params['module_impp'], current_params['module_isc'],
+                current_params['module_power_stc'], current_params['module_v_max_system'], current_params['module_temp_coeff_pmax'], current_params['module_temp_coeff_voc'],
+                current_params['module_temp_coeff_isc'], current_params['module_noct'], current_params['module_dim_width'], current_params['module_dim_length'],
+
+                # Module temperature model coeffs (selected in Step 4)
+                current_params['selected_coeff_a'], current_params['selected_coeff_b'], current_params['selected_coeff_delta_tcnd'],
+
+                # Inverter General Info
+                current_params['inverter_supplier'], current_params['inverter_type'], current_params['inverter_transformer_integrated'],
+
+                # Inverter DC Input limits
+                current_params['inverter_vmpp_min'], current_params['inverter_vmpp_max'], current_params['inverter_v_system_max'],
+                current_params['inverter_max_recommended_pv_power_kw'], current_params['inverter_nominal_pv_power_kw'],
+                current_params['inverter_max_pv_current_a'], current_params['inverter_nominal_pv_current_a'],
+                current_params['inverter_nb_inputs_cc'], current_params['inverter_isc_max_per_inputs'],
+
+                # Design Configuration parameters
+                current_params['design_azimuth'], current_params['design_tilt_angle'], current_params['design_row_spacing_m'],
+                current_params['design_pv_module_rated_power_wp'],
+                # Use the scenario-specific values here
+                current_params['design_modules_per_string'], current_params['design_strings_per_inverter'],
+                current_params['design_num_inverters'],
+                current_params['design_inverter_rated_ac_power_kVA'],
+
+                # Operating Temperatures (derived in Step 4) and Inclination Gains
+                current_params['max_op_temp_c'], current_params['min_op_temp_c'],
+                current_params['max_temp_inclination_gain'], current_params['min_temp_inclination_gain']
+            )
+            all_calculated_results.append((current_params, results_calc))
+        except Exception as e:
+            st.error(f"Error calculating for Modules/String: {modules_per_string}, Strings/Inverter: {strings_per_inverter}. Error: {e}")
+            # Append a dummy result to indicate failure for this scenario
+            all_calculated_results.append((current_params, {"Error": str(e), "Scenario Failed": True}))
+
 
     # --- Download Buttons ---
     st.subheader("Download Data")
-    col_dl1, col_dl2, col_dl3, col_dl4 = st.columns(4)
+    col_dl1, col_dl2 = st.columns(2)
 
-    # Prepare Input Data for download (all parameters stored in session state)
-    input_df = pd.DataFrame(st.session_state.input_params.items(), columns=['Parameter', 'Value'])
-    csv_input = input_df.to_csv(index=False).encode('utf-8')
-    excel_input_buffer = io.BytesIO()
-    input_df.to_excel(excel_input_buffer, index=False, engine='openpyxl')
-    excel_input_buffer.seek(0)
+    # Prepare Combined Results Data for download
+    # Create a list of dictionaries, one for each scenario's results
+    combined_results_for_dl = []
+    for current_params, results_calc_scenario in all_calculated_results:
+        # Include scenario parameters directly in the results for easy identification in download
+        scenario_results = {
+            "Scenario_Modules_per_String": current_params['design_modules_per_string'],
+            "Scenario_Strings_per_Inverter": current_params['design_strings_per_inverter'],
+            **results_calc_scenario # Merge the actual calculation results
+        }
+        # Format NaN/Inf values to "N/A" for better readability in downloaded files.
+        formatted_scenario_results = {k: ("N/A" if (isinstance(v, float) and (math.isinf(v) or math.isnan(v))) else v) for k, v in scenario_results.items()}
+        combined_results_for_dl.append(formatted_scenario_results)
 
-    # Prepare Output Data for download (results from calculate_solar_pv_design)
-    # Format NaN/Inf values to "N/A" for better readability in downloaded files.
-    display_results_for_download = {k: ("N/A" if (isinstance(v, float) and (math.isinf(v) or math.isnan(v))) else v) for k, v in results_calc.items()}
-    results_df = pd.DataFrame(display_results_for_download.items(), columns=['Parameter', 'Value'])
-    csv_results = results_df.to_csv(index=False).encode('utf-8')
+    combined_results_df = pd.DataFrame(combined_results_for_dl)
+
+    csv_results = combined_results_df.to_csv(index=False).encode('utf-8')
     excel_results_buffer = io.BytesIO()
-    results_df.to_excel(excel_results_buffer, index=False, engine='openpyxl')
+    combined_results_df.to_excel(excel_results_buffer, index=False, engine='openpyxl')
     excel_results_buffer.seek(0)
 
     with col_dl1:
-        st.download_button(label="Download Input Data (CSV)", data=csv_input, file_name="solar_input_data.csv", mime="text/csv", key="download_input_csv")
+        st.download_button(label="Download All Scenario Results (CSV)", data=csv_results, file_name="solar_all_scenarios_results.csv", mime="text/csv", key="download_all_results_csv")
     with col_dl2:
-        st.download_button(label="Download Input Data (Excel)", data=excel_input_buffer, file_name="solar_input_data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="download_input_excel")
-    with col_dl3:
-        st.download_button(label="Download Results (CSV)", data=csv_results, file_name="solar_results.csv", mime="text/csv", key="download_results_csv")
-    with col_dl4:
-        st.download_button(label="Download Results (Excel)", data=excel_results_buffer, file_name="solar_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="download_results_excel")
+        st.download_button(label="Download All Scenario Results (Excel)", data=excel_results_buffer, file_name="solar_all_scenarios_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="download_all_results_excel")
+
     st.markdown("---") # Separator
 
 
-    # --- Display Results ---
-    # Calls the various display functions to present the calculated results in a structured and readable format.
-    display_design_summary(params_for_calc, results_calc)
-    st.markdown("---") # Separator
+    # --- Display Results for Each Scenario ---
+    for i, (current_params, results_calc_scenario) in enumerate(all_calculated_results):
+        scenario_title = f"Scenario {i+1}: Modules/String = {current_params['design_modules_per_string']}, Strings/Inverter = {current_params['design_strings_per_inverter']}"
+        with st.expander(scenario_title, expanded=True if i == 0 else False): # Expand the first scenario by default
+            if "Scenario Failed" in results_calc_scenario and results_calc_scenario["Scenario Failed"]:
+                st.error(f"Calculations failed for this scenario: {results_calc_scenario['Error']}")
+                continue
 
-    display_inverter_features(params_for_calc, results_calc)
-    st.markdown("---") # Separator
+            # Calls the various display functions to present the calculated results in a structured and readable format.
+            display_design_summary(current_params, results_calc_scenario)
+            st.markdown("---") # Separator
 
-    display_configuration_maximum(params_for_calc, results_calc)
-    st.markdown("---") # Separator
+            display_inverter_features(current_params, results_calc_scenario)
+            st.markdown("---") # Separator
 
-    display_temperature_behaviour(params_for_calc, results_calc)
-    st.markdown("---") # Separator
+            display_configuration_maximum(current_params, results_calc_scenario)
+            st.markdown("---") # Separator
 
-    display_critical_temp_limits(results_calc)
+            display_temperature_behaviour(current_params, results_calc_scenario)
+            st.markdown("---") # Separator
+
+            display_critical_temp_limits(results_calc_scenario)
+            st.markdown("---") # Separator (end of expander)
